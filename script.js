@@ -3,7 +3,7 @@ const isDevelopment = window.location.hostname === 'localhost' || window.locatio
 const SPOTIFY_CLIENT_ID = '78dbb42de6a1458fa7cc9344d087a1e7';
 const SPOTIFY_REDIRECT_URI = isDevelopment 
     ? 'http://localhost:5500/'
-    : 'https://carloseduardo029.github.io/Valentine/';
+    : 'https://carloseduardo029.github.io/parameuamor/';
 const START_DATE = '2024-03-09';
 const LAST_UPDATE = '2025-03-15 01:32:27';
 
