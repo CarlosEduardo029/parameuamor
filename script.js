@@ -3,9 +3,9 @@ const isDevelopment = window.location.hostname === 'localhost' || window.locatio
 const SPOTIFY_CLIENT_ID = '78dbb42de6a1458fa7cc9344d087a1e7';
 const SPOTIFY_REDIRECT_URI = isDevelopment 
     ? 'http://localhost:5500/'
-    : 'https://carloseduardo029.github.io/parameuamor';
+    : 'https://carloseduardo029.github.io/Valentine/';
 const START_DATE = '2024-03-09';
-const LAST_UPDATE = '2025-03-15 01:19:19';
+const LAST_UPDATE = '2025-03-15 01:32:27';
 
 class SpotifyManager {
     constructor() {
@@ -15,58 +15,31 @@ class SpotifyManager {
         this.currentTrack = null;
         this.player = null;
         this.deviceId = null;
-        this.setupTokenRefresh();
     }
 
-    setupTokenRefresh() {
-        // Verifica o token a cada 30 minutos
-        setInterval(() => {
-            if (this.accessToken) {
-                this.checkTokenValidity();
-            }
-        }, 30 * 60 * 1000);
-    }
-
-    async checkTokenValidity() {
-        try {
-            const response = await fetch('https://api.spotify.com/v1/me', {
-                headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
-                }
-            });
-
-            if (!response.ok) {
-                this.accessToken = null;
-                window.location.href = this.generateAuthUrl();
-            }
-        } catch (error) {
-            console.error('Erro ao verificar token:', error);
-        }
-    }
-
-    generateRandomString(length) {
-        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        let text = '';
-        for (let i = 0; i < length; i++) {
-            text += possible.charAt(Math.floor(Math.random() * possible.length));
-        }
-        return text;
-    }
-
+    // Modificado para simplificar a autenticação
     generateAuthUrl() {
-        const state = this.generateRandomString(16);
-        localStorage.setItem('spotify_auth_state', state);
-
         const scope = 'streaming user-read-private user-read-playback-state user-modify-playback-state playlist-read-private';
-        const args = new URLSearchParams({
-            response_type: 'token',
-            client_id: SPOTIFY_CLIENT_ID,
-            scope: scope,
-            redirect_uri: SPOTIFY_REDIRECT_URI,
-            state: state
-        });
+        return `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&redirect_uri=${encodeURIComponent(SPOTIFY_REDIRECT_URI)}&scope=${encodeURIComponent(scope)}&response_type=token&show_dialog=true`;
+    }
 
-        return 'https://accounts.spotify.com/authorize?' + args;
+    // Modificado para remover a verificação de estado que estava causando o loop
+    async initialize() {
+        console.log('Inicializando...');
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        this.accessToken = params.get('access_token');
+
+        if (!this.accessToken) {
+            console.log('Sem token, redirecionando para autenticação...');
+            window.location.href = this.generateAuthUrl();
+            return;
+        }
+
+        console.log('Token encontrado, inicializando player...');
+        history.pushState("", document.title, window.location.pathname);
+        await this.initializePlayer();
+        await this.loadPlaylist();
     }
 
     initializePlayer() {
@@ -84,7 +57,6 @@ class SpotifyManager {
 
                 this.player.addListener('authentication_error', ({ message }) => {
                     console.error('Erro de autenticação:', message);
-                    this.accessToken = null;
                     window.location.href = this.generateAuthUrl();
                 });
 
@@ -102,34 +74,17 @@ class SpotifyManager {
                     resolve();
                 });
 
-                this.player.addListener('player_state_changed', state => {
-                    if (state) {
-                        this.updatePlaybackState(state);
-                    }
+                this.player.addListener('not_ready', ({ device_id }) => {
+                    console.log('Device ID não está mais pronto:', device_id);
                 });
 
-                this.player.connect();
+                this.player.connect().then(success => {
+                    if (success) {
+                        console.log('Player conectado com sucesso!');
+                    }
+                });
             };
         });
-    }
-
-    async initialize() {
-        const hash = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
-        this.accessToken = params.get('access_token');
-        const state = params.get('state');
-        const storedState = localStorage.getItem('spotify_auth_state');
-
-        if (state === null || state !== storedState) {
-            window.location.href = this.generateAuthUrl();
-        } else if (!this.accessToken) {
-            window.location.href = this.generateAuthUrl();
-        } else {
-            localStorage.removeItem('spotify_auth_state');
-            history.pushState("", document.title, window.location.pathname);
-            await this.initializePlayer();
-            await this.loadPlaylist();
-        }
     }
 
     async loadPlaylist() {
