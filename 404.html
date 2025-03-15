@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Redirecionando...</title>
+    <script>
+        // Pega o hash da URL atual
+        const hash = window.location.hash;
+        
+        // Redireciona para a página principal com o hash
+        window.location.replace('/' + window.location.pathname.split('/')[1] + '/' + hash);
+    </script>
+</head>
+<body>
+    Redirecionando...
+</body>
+</html>
