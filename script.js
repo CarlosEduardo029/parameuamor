@@ -5,136 +5,50 @@ const SPOTIFY_REDIRECT_URI = isDevelopment
     ? 'http://127.0.0.1:5500/'
     : 'https://carloseduardo029.github.io/parameuamor/';
 const START_DATE = '2024-03-09';
-const LAST_UPDATE = '2025-03-15 01:46:05';
 
 class SpotifyManager {
     constructor() {
         this.accessToken = null;
         this.playlistId = '6dT06GvZrdXbETGPSsWmIR';
-        this.isPlaying = false;
-        this.currentTrack = null;
-        this.player = null;
-        this.deviceId = null;
     }
 
     generateAuthUrl() {
-        const scope = 'streaming user-read-private user-read-playback-state user-modify-playback-state playlist-read-private';
-        
-        // Limpa qualquer token anterior
-        localStorage.removeItem('spotify_access_token');
-        
-        return `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&redirect_uri=${encodeURIComponent(SPOTIFY_REDIRECT_URI)}&scope=${encodeURIComponent(scope)}&response_type=token&show_dialog=false`;
+        const scope = 'playlist-read-private';
+        return `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&redirect_uri=${encodeURIComponent(SPOTIFY_REDIRECT_URI)}&scope=${encodeURIComponent(scope)}&response_type=token`;
     }
 
     async initialize() {
-        console.log('Iniciando inicialização...');
+        console.log('Iniciando...');
         
-        // Primeiro, tenta obter o token do localStorage
+        // Verifica se já temos um token
         this.accessToken = localStorage.getItem('spotify_access_token');
         
-        // Se não houver token no localStorage, verifica o hash da URL
+        // Se não tiver no localStorage, procura na URL
         if (!this.accessToken) {
             const hash = window.location.hash.substring(1);
             const params = new URLSearchParams(hash);
             this.accessToken = params.get('access_token');
             
             if (this.accessToken) {
-                // Se encontrou um token no hash, salva no localStorage
                 localStorage.setItem('spotify_access_token', this.accessToken);
-                // Limpa o hash da URL
                 history.pushState("", document.title, window.location.pathname);
             }
         }
 
         // Se ainda não tiver token, redireciona para autenticação
         if (!this.accessToken) {
-            console.log('Token não encontrado, redirecionando para autenticação...');
+            console.log('Token não encontrado, redirecionando...');
             window.location.href = this.generateAuthUrl();
             return;
         }
 
-        console.log('Token encontrado, verificando validade...');
-        
-        // Verifica se o token é válido
-        try {
-            const response = await fetch('https://api.spotify.com/v1/me', {
-                headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
-                }
-            });
-
-            if (!response.ok) {
-                console.log('Token inválido, redirecionando para nova autenticação...');
-                localStorage.removeItem('spotify_access_token');
-                window.location.href = this.generateAuthUrl();
-                return;
-            }
-
-            console.log('Token válido, inicializando player...');
-            await this.initializePlayer();
-            await this.loadPlaylist();
-            
-        } catch (error) {
-            console.error('Erro ao verificar token:', error);
-            localStorage.removeItem('spotify_access_token');
-            window.location.href = this.generateAuthUrl();
-        }
+        // Carrega a playlist
+        await this.loadPlaylist();
     }
-
-    initializePlayer() {
-        return new Promise((resolve) => {
-            window.onSpotifyWebPlaybackSDKReady = () => {
-                console.log('SDK do Spotify carregado');
-                
-                this.player = new Spotify.Player({
-                    name: 'Nossa Playlist Web Player',
-                    getOAuthToken: cb => { cb(this.accessToken); },
-                    volume: 0.5
-                });
-
-                this.player.addListener('initialization_error', ({ message }) => {
-                    console.error('Erro de inicialização:', message);
-                });
-
-                this.player.addListener('authentication_error', ({ message }) => {
-                    console.error('Erro de autenticação:', message);
-                    localStorage.removeItem('spotify_access_token');
-                    window.location.href = this.generateAuthUrl();
-                });
-
-                this.player.addListener('account_error', ({ message }) => {
-                    alert('É necessário ter Spotify Premium para reproduzir músicas diretamente no site');
-                });
-
-                this.player.addListener('playback_error', ({ message }) => {
-                    console.error('Erro de reprodução:', message);
-                });
-
-                this.player.addListener('ready', ({ device_id }) => {
-                    console.log('Player Web pronto!');
-                    this.deviceId = device_id;
-                    resolve();
-                });
-
-                this.player.addListener('not_ready', ({ device_id }) => {
-                    console.log('Device ID não está mais pronto:', device_id);
-                });
-
-                console.log('Conectando ao player...');
-                this.player.connect().then(success => {
-                    if (success) {
-                        console.log('Player conectado com sucesso!');
-                    } else {
-                        console.log('Falha ao conectar o player');
-                    }
-                });
-            };
-        });
-    }
-
 
     async loadPlaylist() {
         try {
+            console.log('Carregando playlist...');
             const response = await fetch(`https://api.spotify.com/v1/playlists/${this.playlistId}/tracks`, {
                 headers: {
                     'Authorization': `Bearer ${this.accessToken}`
@@ -147,9 +61,11 @@ class SpotifyManager {
 
             const data = await response.json();
             this.renderPlaylist(data.items);
+
         } catch (error) {
             console.error('Erro ao carregar playlist:', error);
             if (error.status === 401) {
+                localStorage.removeItem('spotify_access_token');
                 window.location.href = this.generateAuthUrl();
             }
         }
@@ -182,74 +98,17 @@ class SpotifyManager {
                 <p class="album">${track.album.name}</p>
             </div>
             <div class="music-controls">
-                <i class="fas fa-play" data-track-uri="${track.uri}"></i>
+                <a href="${track.external_urls.spotify}" target="_blank">
+                    <i class="fas fa-play"></i>
+                </a>
             </div>
         `;
 
-        const playButton = div.querySelector('.fa-play');
-        playButton.addEventListener('click', (e) => this.togglePlay(e, track));
-
         return div;
-    }
-
-    updatePlaybackState(state) {
-        if (!state || !state.track_window || !state.track_window.current_track) return;
-
-        const playingTrackUri = state.track_window.current_track.uri;
-        document.querySelectorAll('.music-controls i').forEach(icon => {
-            const trackUri = icon.getAttribute('data-track-uri');
-            if (trackUri === playingTrackUri) {
-                icon.classList.replace(state.paused ? 'fa-pause' : 'fa-play', 
-                                    state.paused ? 'fa-play' : 'fa-pause');
-            } else {
-                icon.classList.replace('fa-pause', 'fa-play');
-            }
-        });
-    }
-
-    async togglePlay(event, track) {
-        event.stopPropagation();
-        const button = event.target;
-
-        try {
-            if (this.currentTrack === track.uri && this.isPlaying) {
-                await this.player.pause();
-                button.classList.replace('fa-pause', 'fa-play');
-                this.isPlaying = false;
-            } else {
-                if (!this.deviceId) {
-                    alert('Aguarde o player inicializar...');
-                    return;
-                }
-
-                await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${this.deviceId}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bearer ${this.accessToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        uris: [track.uri]
-                    })
-                });
-
-                document.querySelectorAll('.music-controls i').forEach(icon => {
-                    icon.classList.replace('fa-pause', 'fa-play');
-                });
-
-                button.classList.replace('fa-play', 'fa-pause');
-                this.currentTrack = track.uri;
-                this.isPlaying = true;
-            }
-        } catch (error) {
-            console.error('Erro ao controlar reprodução:', error);
-            if (error.status === 404 || error.status === 403) {
-                alert('Por favor, certifique-se de ter uma conta Spotify Premium');
-            }
-        }
     }
 }
 
+// Funções para os contadores
 function calculateDaysTogether() {
     const start = new Date(START_DATE);
     const today = new Date();
@@ -273,6 +132,7 @@ function updateCounters() {
     if (heartBeatsElement) heartBeatsElement.textContent = calculateHeartBeats().toLocaleString();
 }
 
+// Efeitos visuais
 function setupVisualEffects() {
     const heroSection = document.querySelector('.hero-section');
     if (heroSection) {
@@ -294,6 +154,7 @@ function setupVisualEffects() {
         .forEach(element => observer.observe(element));
 }
 
+// Navegação mobile
 function setupMobileNav() {
     const nav = document.querySelector('.navigation');
     const menuButton = document.createElement('button');
@@ -328,6 +189,7 @@ function setupMobileNav() {
     }
 }
 
+// Inicialização
 document.addEventListener('DOMContentLoaded', () => {
     const spotifyManager = new SpotifyManager();
     spotifyManager.initialize();
