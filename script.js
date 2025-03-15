@@ -5,6 +5,7 @@ const SPOTIFY_REDIRECT_URI = isDevelopment
     ? 'http://127.0.0.1:5500/'
     : 'https://carloseduardo029.github.io/parameuamor/';
 const START_DATE = '2024-03-09';
+const LAST_UPDATE = '2025-03-15 02:04:01';
 
 class SpotifyManager {
     constructor() {
@@ -13,42 +14,104 @@ class SpotifyManager {
     }
 
     generateAuthUrl() {
+        // Limpa qualquer token antigo
+        localStorage.removeItem('spotify_access_token');
+        
         const scope = 'playlist-read-private';
-        return `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&redirect_uri=${encodeURIComponent(SPOTIFY_REDIRECT_URI)}&scope=${encodeURIComponent(scope)}&response_type=token`;
+        const state = this.generateRandomString(16);
+        
+        // Salva o estado para verificação
+        sessionStorage.setItem('spotify_auth_state', state);
+
+        const params = new URLSearchParams({
+            response_type: 'token',
+            client_id: SPOTIFY_CLIENT_ID,
+            scope: scope,
+            redirect_uri: SPOTIFY_REDIRECT_URI,
+            state: state,
+            show_dialog: true
+        });
+
+        return 'https://accounts.spotify.com/authorize?' + params.toString();
+    }
+
+    generateRandomString(length) {
+        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let text = '';
+        for (let i = 0; i < length; i++) {
+            text += possible.charAt(Math.floor(Math.random() * possible.length));
+        }
+        return text;
+    }
+
+    async validateToken() {
+        try {
+            const response = await fetch('https://api.spotify.com/v1/me', {
+                headers: {
+                    'Authorization': `Bearer ${this.accessToken}`
+                }
+            });
+
+            return response.ok;
+        } catch (error) {
+            console.error('Erro ao validar token:', error);
+            return false;
+        }
     }
 
     async initialize() {
-        console.log('Iniciando...');
-        
-        // Verifica se já temos um token
-        this.accessToken = localStorage.getItem('spotify_access_token');
-        
-        // Se não tiver no localStorage, procura na URL
-        if (!this.accessToken) {
-            const hash = window.location.hash.substring(1);
-            const params = new URLSearchParams(hash);
-            this.accessToken = params.get('access_token');
-            
-            if (this.accessToken) {
-                localStorage.setItem('spotify_access_token', this.accessToken);
-                history.pushState("", document.title, window.location.pathname);
+        try {
+            console.log('Iniciando processo de autenticação...');
+
+            // Primeiro tenta pegar o token do localStorage
+            this.accessToken = localStorage.getItem('spotify_access_token');
+
+            // Se não encontrou no localStorage, procura na URL
+            if (!this.accessToken) {
+                console.log('Token não encontrado no localStorage, verificando URL...');
+                const hash = window.location.hash.substring(1);
+                const params = new URLSearchParams(hash);
+                this.accessToken = params.get('access_token');
+
+                if (this.accessToken) {
+                    console.log('Token encontrado na URL, salvando...');
+                    localStorage.setItem('spotify_access_token', this.accessToken);
+                    // Limpa a URL
+                    window.location.hash = '';
+                }
             }
-        }
 
-        // Se ainda não tiver token, redireciona para autenticação
-        if (!this.accessToken) {
-            console.log('Token não encontrado, redirecionando...');
+            // Se ainda não tem token, redireciona para autenticação
+            if (!this.accessToken) {
+                console.log('Token não encontrado, redirecionando para autenticação...');
+                window.location.href = this.generateAuthUrl();
+                return;
+            }
+
+            // Valida o token
+            console.log('Validando token...');
+            const isValid = await this.validateToken();
+
+            if (!isValid) {
+                console.log('Token inválido, redirecionando para nova autenticação...');
+                localStorage.removeItem('spotify_access_token');
+                window.location.href = this.generateAuthUrl();
+                return;
+            }
+
+            console.log('Token válido, carregando playlist...');
+            await this.loadPlaylist();
+
+        } catch (error) {
+            console.error('Erro durante inicialização:', error);
+            localStorage.removeItem('spotify_access_token');
             window.location.href = this.generateAuthUrl();
-            return;
         }
-
-        // Carrega a playlist
-        await this.loadPlaylist();
     }
 
     async loadPlaylist() {
         try {
-            console.log('Carregando playlist...');
+            console.log('Fazendo requisição para a API do Spotify...');
             const response = await fetch(`https://api.spotify.com/v1/playlists/${this.playlistId}/tracks`, {
                 headers: {
                     'Authorization': `Bearer ${this.accessToken}`
@@ -56,10 +119,11 @@ class SpotifyManager {
             });
 
             if (!response.ok) {
-                throw new Error('Falha ao carregar playlist');
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const data = await response.json();
+            console.log('Playlist carregada com sucesso!');
             this.renderPlaylist(data.items);
 
         } catch (error) {
@@ -73,32 +137,44 @@ class SpotifyManager {
 
     renderPlaylist(tracks) {
         const musicList = document.querySelector('.music-list');
-        if (!musicList) return;
+        if (!musicList) {
+            console.error('Elemento .music-list não encontrado!');
+            return;
+        }
 
+        console.log(`Renderizando ${tracks.length} músicas...`);
         musicList.innerHTML = '';
 
-        tracks.forEach(track => {
-            if (track.track) {
-                const musicItem = this.createMusicItem(track.track);
+        tracks.forEach((item, index) => {
+            if (item.track) {
+                const musicItem = this.createMusicItem(item.track, index);
                 musicList.appendChild(musicItem);
             }
         });
     }
 
-    createMusicItem(track) {
+    createMusicItem(track, index) {
         const div = document.createElement('div');
         div.className = 'music-item';
+        
+        // Verifica se todas as propriedades necessárias existem
+        const imageUrl = track.album?.images[0]?.url || '';
+        const albumName = track.album?.name || 'Album desconhecido';
+        const trackName = track.name || 'Música desconhecida';
+        const artistNames = track.artists?.map(artist => artist.name).join(', ') || 'Artista desconhecido';
+        const spotifyUrl = track.external_urls?.spotify || '#';
+
         div.innerHTML = `
             <div class="music-thumbnail">
-                <img src="${track.album.images[0].url}" alt="${track.album.name}">
+                <img src="${imageUrl}" alt="${albumName}" onerror="this.src='caminho/para/imagem/padrao.jpg'">
             </div>
             <div class="music-info">
-                <h3 class="song-title">${track.name}</h3>
-                <p class="artist">${track.artists.map(artist => artist.name).join(', ')}</p>
-                <p class="album">${track.album.name}</p>
+                <h3 class="song-title">${trackName}</h3>
+                <p class="artist">${artistNames}</p>
+                <p class="album">${albumName}</p>
             </div>
             <div class="music-controls">
-                <a href="${track.external_urls.spotify}" target="_blank">
+                <a href="${spotifyUrl}" target="_blank" rel="noopener noreferrer">
                     <i class="fas fa-play"></i>
                 </a>
             </div>
@@ -191,8 +267,12 @@ function setupMobileNav() {
 
 // Inicialização
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('Página carregada, iniciando aplicação...');
+    
     const spotifyManager = new SpotifyManager();
-    spotifyManager.initialize();
+    spotifyManager.initialize().catch(error => {
+        console.error('Erro fatal durante inicialização:', error);
+    });
 
     setupVisualEffects();
     setupMobileNav();
@@ -200,6 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setInterval(updateCounters, 60000);
 
+    // Smooth scroll
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
         anchor.addEventListener('click', function(e) {
             e.preventDefault();
