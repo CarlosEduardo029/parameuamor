@@ -2,10 +2,10 @@
 const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const SPOTIFY_CLIENT_ID = '78dbb42de6a1458fa7cc9344d087a1e7';
 const SPOTIFY_REDIRECT_URI = isDevelopment 
-    ? 'http://localhost:5500/'
+    ? 'http://127.0.0.1:5500/'
     : 'https://carloseduardo029.github.io/parameuamor/';
 const START_DATE = '2024-03-09';
-const LAST_UPDATE = '2025-03-15 01:32:27';
+const LAST_UPDATE = '2025-03-15 01:46:05';
 
 class SpotifyManager {
     constructor() {
@@ -17,34 +17,75 @@ class SpotifyManager {
         this.deviceId = null;
     }
 
-    // Modificado para simplificar a autenticação
     generateAuthUrl() {
         const scope = 'streaming user-read-private user-read-playback-state user-modify-playback-state playlist-read-private';
-        return `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&redirect_uri=${encodeURIComponent(SPOTIFY_REDIRECT_URI)}&scope=${encodeURIComponent(scope)}&response_type=token&show_dialog=true`;
+        
+        // Limpa qualquer token anterior
+        localStorage.removeItem('spotify_access_token');
+        
+        return `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&redirect_uri=${encodeURIComponent(SPOTIFY_REDIRECT_URI)}&scope=${encodeURIComponent(scope)}&response_type=token&show_dialog=false`;
     }
 
-    // Modificado para remover a verificação de estado que estava causando o loop
     async initialize() {
-        console.log('Inicializando...');
-        const hash = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
-        this.accessToken = params.get('access_token');
-
+        console.log('Iniciando inicialização...');
+        
+        // Primeiro, tenta obter o token do localStorage
+        this.accessToken = localStorage.getItem('spotify_access_token');
+        
+        // Se não houver token no localStorage, verifica o hash da URL
         if (!this.accessToken) {
-            console.log('Sem token, redirecionando para autenticação...');
+            const hash = window.location.hash.substring(1);
+            const params = new URLSearchParams(hash);
+            this.accessToken = params.get('access_token');
+            
+            if (this.accessToken) {
+                // Se encontrou um token no hash, salva no localStorage
+                localStorage.setItem('spotify_access_token', this.accessToken);
+                // Limpa o hash da URL
+                history.pushState("", document.title, window.location.pathname);
+            }
+        }
+
+        // Se ainda não tiver token, redireciona para autenticação
+        if (!this.accessToken) {
+            console.log('Token não encontrado, redirecionando para autenticação...');
             window.location.href = this.generateAuthUrl();
             return;
         }
 
-        console.log('Token encontrado, inicializando player...');
-        history.pushState("", document.title, window.location.pathname);
-        await this.initializePlayer();
-        await this.loadPlaylist();
+        console.log('Token encontrado, verificando validade...');
+        
+        // Verifica se o token é válido
+        try {
+            const response = await fetch('https://api.spotify.com/v1/me', {
+                headers: {
+                    'Authorization': `Bearer ${this.accessToken}`
+                }
+            });
+
+            if (!response.ok) {
+                console.log('Token inválido, redirecionando para nova autenticação...');
+                localStorage.removeItem('spotify_access_token');
+                window.location.href = this.generateAuthUrl();
+                return;
+            }
+
+            console.log('Token válido, inicializando player...');
+            await this.initializePlayer();
+            await this.loadPlaylist();
+            
+        } catch (error) {
+            console.error('Erro ao verificar token:', error);
+            localStorage.removeItem('spotify_access_token');
+            window.location.href = this.generateAuthUrl();
+        }
     }
 
     initializePlayer() {
         return new Promise((resolve) => {
             window.onSpotifyWebPlaybackSDKReady = () => {
+                console.log('SDK do Spotify carregado');
+                
                 this.player = new Spotify.Player({
                     name: 'Nossa Playlist Web Player',
                     getOAuthToken: cb => { cb(this.accessToken); },
@@ -57,6 +98,7 @@ class SpotifyManager {
 
                 this.player.addListener('authentication_error', ({ message }) => {
                     console.error('Erro de autenticação:', message);
+                    localStorage.removeItem('spotify_access_token');
                     window.location.href = this.generateAuthUrl();
                 });
 
@@ -78,14 +120,18 @@ class SpotifyManager {
                     console.log('Device ID não está mais pronto:', device_id);
                 });
 
+                console.log('Conectando ao player...');
                 this.player.connect().then(success => {
                     if (success) {
                         console.log('Player conectado com sucesso!');
+                    } else {
+                        console.log('Falha ao conectar o player');
                     }
                 });
             };
         });
     }
+
 
     async loadPlaylist() {
         try {
